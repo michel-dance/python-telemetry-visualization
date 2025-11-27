@@ -3,7 +3,7 @@
 Minimal telemetry visualization prototype backed by the Python standard library.
 
 The server exposes two endpoints:
-  GET /           -> interactive HTML page with a Chart.js visualization
+  GET /           -> interactive HTML page (Prototype 2) rendered with Pyodide + pure Python
   GET /telemetry  -> JSON payload with sample telemetry used by the chart
 """
 
@@ -93,13 +93,13 @@ INDEX_HTML = """<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Telemetry Visualization Prototype</title>
+    <title>Telemetry Visualization Prototype 2</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
       :root {
         color-scheme: light dark;
         font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        background-color: #0b1526;
+        background-color: #050811;
         color: #f5f5f5;
       }
       body {
@@ -112,7 +112,7 @@ INDEX_HTML = """<!doctype html>
         max-width: 1024px;
         margin: 0 auto;
         padding: 1.5rem;
-        background: rgba(8, 13, 24, 0.85);
+        background: rgba(8, 13, 24, 0.88);
         border-radius: 20px;
         box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
         border: 1px solid rgba(255, 255, 255, 0.08);
@@ -121,36 +121,28 @@ INDEX_HTML = """<!doctype html>
         margin-top: 0;
         font-size: clamp(1.5rem, 2.5vw, 2.5rem);
       }
-      canvas {
-        width: 100%;
-        max-height: 480px;
+      .subhead {
+        margin: 0 0 1rem 0;
+        color: #b5bfd7;
       }
-      .legend {
-        margin-top: 1rem;
-        font-size: 0.95rem;
+      .chart {
+        min-height: 420px;
         display: flex;
-        flex-wrap: wrap;
-        gap: 1rem;
-      }
-      .chip {
-        display: inline-flex;
         align-items: center;
-        gap: 0.5rem;
+        justify-content: center;
+        text-align: center;
       }
-      .chip span {
-        width: 12px;
-        height: 12px;
-        border-radius: 999px;
-        display: inline-block;
+      .chart p {
+        margin: 0;
+        color: #cfd6ec;
       }
-      .chip .speed {
-        background: #42b0ff;
+      .status {
+        margin-top: 1rem;
+        font-size: 0.9rem;
+        color: #9fb2d9;
       }
-      .chip .energy {
-        background: #ff8f3f;
-      }
-      .chip .autopilot {
-        background: #00d68f;
+      .error {
+        color: #ff6b6b;
       }
       footer {
         margin-top: 1.5rem;
@@ -158,125 +150,145 @@ INDEX_HTML = """<!doctype html>
         opacity: 0.8;
       }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
   </head>
   <body>
     <div class="card">
-      <h1>Vehicle Telemetry (Prototype)</h1>
-      <canvas id="telemetryChart" aria-label="Trip telemetry visualization"></canvas>
-      <div class="legend" aria-hidden="true">
-        <div class="chip"><span class="speed"></span>Speed</div>
-        <div class="chip"><span class="energy"></span>Cumulative Energy Used</div>
-        <div class="chip"><span class="autopilot"></span>Autopilot Active</div>
+      <h1>Vehicle Telemetry (Prototype 2 – Pyodide)</h1>
+      <p id="meta" class="subhead">Loading trip details…</p>
+      <div id="chart" class="chart" role="img" aria-label="Vehicle telemetry visualization">
+        <p>Loading telemetry via Python (WebAssembly)…</p>
       </div>
+      <p id="status" class="status">Initializing runtime…</p>
       <footer>
-        Sample trip: speed in km/h, energy in kWh used, autopilot indicator.
+        Prototype 2 renders the visualization using pure Python executed inside the browser with WebAssembly (Pyodide).
       </footer>
     </div>
     <script>
-      async function initChart() {
-        const res = await fetch('/telemetry');
-        if (!res.ok) {
-          throw new Error('Failed to load telemetry data');
+      async function bootstrap() {
+        const statusEl = document.getElementById('status');
+        try {
+          statusEl.textContent = 'Downloading Pyodide runtime…';
+          const pyodide = await loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/' });
+
+          statusEl.textContent = 'Fetching telemetry payload…';
+          const res = await fetch('/telemetry');
+          if (!res.ok) {
+            throw new Error('Failed to fetch telemetry data');
+          }
+          const payload = await res.json();
+          const vehicle = payload.vehicle || 'Vehicle';
+          const trip = payload.trip_id || 'Trip';
+          document.getElementById('meta').textContent = vehicle + ' · ' + trip;
+
+          pyodide.globals.set('payload_json', JSON.stringify(payload));
+          await pyodide.runPythonAsync(`
+import json
+from datetime import datetime
+from js import document
+
+payload = json.loads(payload_json)
+points = payload.get("points", [])
+chart_el = document.getElementById("chart")
+
+if not points:
+    chart_el.innerHTML = "<p>No telemetry samples available.</p>"
+else:
+    width = 960
+    height = 420
+    pad = 60
+    inner_w = width - 2 * pad
+    inner_h = height - 2 * pad
+
+    speed_vals = [p["speed_kmh"] for p in points]
+    energy_vals = [p["energy_kwh_used"] for p in points]
+    auto_vals = [bool(p["autopilot"]) for p in points]
+
+    speed_max = max(max(speed_vals), 1)
+    energy_max = max(max(energy_vals), 1)
+
+    def x_pos(idx: int) -> float:
+        if len(points) == 1:
+            return pad
+        step = inner_w / (len(points) - 1)
+        return pad + idx * step
+
+    def y_speed(val: float) -> float:
+        return pad + inner_h - (val / speed_max) * inner_h
+
+    def y_energy(val: float) -> float:
+        return pad + inner_h - (val / energy_max) * inner_h
+
+    def path(values, fn):
+        coords = [f"{x_pos(i):.2f},{fn(v):.2f}" for i, v in enumerate(values)]
+        return " ".join(coords)
+
+    speed_path = path(speed_vals, y_speed)
+    energy_path = path(energy_vals, y_energy)
+
+    bands = []
+    start = None
+    for idx, engaged in enumerate(auto_vals):
+        if engaged and start is None:
+            start = idx
+        elif not engaged and start is not None:
+            bands.append((start, idx - 1))
+            start = None
+    if start is not None:
+        bands.append((start, len(points) - 1))
+
+    band_rects = []
+    for start_idx, end_idx in bands:
+        x1 = x_pos(start_idx)
+        x2 = x_pos(end_idx)
+        width_band = max(x2 - x1, 4)
+        band_rects.append(
+            f'<rect x="{x1:.2f}" y="{pad - 20}" width="{width_band:.2f}" height="{inner_h + 20}" class="autopilot"></rect>'
+        )
+
+    tick_indices = {0, len(points) - 1}
+    if len(points) > 2:
+        tick_indices.add(len(points) // 2)
+    x_ticks = []
+    for idx in sorted(tick_indices):
+        label_time = datetime.fromisoformat(points[idx]["timestamp"]).strftime("%H:%M")
+        x_ticks.append(
+            f'<text x="{x_pos(idx):.2f}" y="{pad + inner_h + 30}" class="tick">{label_time}</text>'
+        )
+
+    svg = [
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" aria-label="Speed, energy, and autopilot telemetry">',
+        '<defs><style><![CDATA[',
+        '.axis { stroke: rgba(255,255,255,0.25); stroke-width: 1; }',
+        '.speed { fill: none; stroke: #42b0ff; stroke-width: 3; }',
+        '.energy { fill: none; stroke: #ff8f3f; stroke-width: 3; stroke-dasharray: 6 4; }',
+        '.autopilot { fill: rgba(0,214,143,0.12); stroke: rgba(0,214,143,0.4); stroke-width: 1; }',
+        '.tick { fill: #d4d8e3; font-size: 0.85rem; text-anchor: middle; }',
+        '.label { fill: #d4d8e3; font-size: 0.9rem; }',
+        ']]></style></defs>',
+        f'<line x1="{pad}" y1="{pad}" x2="{pad}" y2="{pad + inner_h}" class="axis"></line>',
+        f'<line x1="{pad}" y1="{pad + inner_h}" x2="{pad + inner_w}" y2="{pad + inner_h}" class="axis"></line>',
+        *band_rects,
+        f'<polyline points="{speed_path}" class="speed"></polyline>',
+        f'<polyline points="{energy_path}" class="energy"></polyline>',
+        *x_ticks,
+        f'<text x="{pad}" y="{pad - 25}" class="label">Speed (km/h)</text>',
+        f'<text x="{pad + inner_w}" y="{pad - 25}" class="label" text-anchor="end">Energy (kWh)</text>',
+        '</svg>',
+    ]
+    chart_el.innerHTML = "".join(svg)
+
+del payload_json
+`)
+          statusEl.textContent = 'Rendered with Pyodide (Prototype 2)';
+        } catch (error) {
+          console.error(error);
+          statusEl.textContent = 'Unable to render telemetry: ' + error.message;
+          document.getElementById('chart').innerHTML = '<p class="error">' + error.message + '</p>';
         }
-        const payload = await res.json();
-        const labels = payload.points.map(p => new Date(p.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
-        const autopilot = payload.points.map(p => p.autopilot ? 1 : 0);
-        const speed = payload.points.map(p => p.speed_kmh);
-        const energy = payload.points.map(p => p.energy_kwh_used);
-        const ctx = document.getElementById('telemetryChart');
-        new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels,
-            datasets: [
-              {
-                label: 'Speed (km/h)',
-                data: speed,
-                borderColor: '#42b0ff',
-                backgroundColor: 'rgba(66, 176, 255, 0.15)',
-                tension: 0.3,
-                yAxisID: 'y',
-                fill: true,
-              },
-              {
-                label: 'Cumulative Energy (kWh)',
-                data: energy,
-                borderColor: '#ff8f3f',
-                backgroundColor: 'rgba(255, 143, 63, 0.2)',
-                tension: 0.4,
-                yAxisID: 'y1',
-              },
-              {
-                label: 'Autopilot Active',
-                data: autopilot,
-                borderColor: '#00d68f',
-                backgroundColor: 'rgba(0, 214, 143, 0.3)',
-                stepped: true,
-                yAxisID: 'y2',
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            interaction: {
-              mode: 'index',
-              intersect: false,
-            },
-            stacked: false,
-            plugins: {
-              legend: {
-                labels: {
-                  color: '#f5f5f5',
-                },
-              },
-              tooltip: {
-                callbacks: {
-                  afterBody(items) {
-                    const idx = items[0].dataIndex;
-                    const point = payload.points[idx];
-                    return `Autopilot: ${point.autopilot ? 'engaged' : 'manual'}`;
-                  },
-                },
-              },
-            },
-            scales: {
-              x: {
-                ticks: { color: '#d4d8e3' },
-                grid: { color: 'rgba(255,255,255,0.05)' },
-              },
-              y: {
-                type: 'linear',
-                position: 'left',
-                title: { display: true, text: 'Speed (km/h)' },
-                ticks: { color: '#d4d8e3' },
-                grid: { color: 'rgba(255,255,255,0.05)' },
-              },
-              y1: {
-                type: 'linear',
-                position: 'right',
-                title: { display: true, text: 'Energy (kWh)' },
-                ticks: { color: '#d4d8e3' },
-                grid: { drawOnChartArea: false },
-              },
-              y2: {
-                type: 'linear',
-                position: 'right',
-                display: false,
-                min: 0,
-                max: 1,
-              },
-            },
-          },
-        });
       }
 
-      initChart().catch((err) => {
-        document.querySelector('.card').insertAdjacentHTML(
-          'beforeend',
-          `<p style="color:#ff6b6b">Unable to load telemetry data: ${err.message}</p>`
-        );
-      });
+      bootstrap();
     </script>
   </body>
 </html>
