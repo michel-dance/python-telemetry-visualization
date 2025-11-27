@@ -42,7 +42,7 @@ Prototype 2 keeps the lightweight Python backend but swaps the front-end chartin
 This keeps the visualization logic in Python, avoiding the need to maintain JavaScript charting code going forward. The HTML still loads Pyodide from a CDN, so a network connection is required the first time the page loads to download the runtime (~8 MB).
 
 ![Demo screenshot](prototype2.png)
-
+    
 ### Prerequisites
 
 - Python 3.9 or newer (only the Python standard library is required).
