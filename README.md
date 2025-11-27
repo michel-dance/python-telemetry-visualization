@@ -29,7 +29,7 @@ A web based appliction that shows a sample vehicle telemetry visualiztion for an
 
 The initial version provides a single-file Python backend (`server.py`) plus a static HTML page that used Chart.js to render speed, energy usage, and autopilot data. Prototype 1 proved out the data model and API surface but still relied on a JavaScript charting library for visualization.
 
-![Demo screenshot](demo1.png)
+![Demo screenshot](prototype1.png)
 
 ## Prototype 2 implementation
 
@@ -41,7 +41,7 @@ Prototype 2 keeps the lightweight Python backend but swaps the front-end chartin
 
 This keeps the visualization logic in Python, avoiding the need to maintain JavaScript charting code going forward. The HTML still loads Pyodide from a CDN, so a network connection is required the first time the page loads to download the runtime (~8 MB).
 
-
+![Demo screenshot](prototype2.png)
 
 ### Prerequisites
 
