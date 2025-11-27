@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, List
+from urllib.parse import parse_qs, urlparse
 
 
 def build_sample_data() -> List[Dict[str, object]]:
@@ -53,9 +54,27 @@ def build_sample_data() -> List[Dict[str, object]]:
 SAMPLE_PAYLOAD = {"vehicle": "Prototype AV-1", "trip_id": "demo-trip-001", "points": build_sample_data()}
 
 
-def build_visualization_svg(payload: Dict[str, object]) -> str:
+def build_visualization_svg(
+    payload: Dict[str, object], start_iso: str | None = None, end_iso: str | None = None
+) -> str:
     """Render the telemetry payload into a stacked SVG visualization."""
-    points = payload.get("points", [])
+    raw_points = payload.get("points", [])
+    points = list(raw_points)
+
+    if start_iso or end_iso:
+        start_dt = datetime.fromisoformat(start_iso) if start_iso else None
+        end_dt = datetime.fromisoformat(end_iso) if end_iso else None
+        filtered = []
+        for point in points:
+            ts = datetime.fromisoformat(str(point["timestamp"]))
+            if start_dt and ts < start_dt:
+                continue
+            if end_dt and ts > end_dt:
+                continue
+            filtered.append(point)
+        if filtered:
+            points = filtered
+
     width = 960
     pad_left = 60
     pad_right = 60
@@ -234,6 +253,25 @@ def build_index_html(payload: Dict[str, object]) -> str:
         min-height: 420px;
         margin-bottom: 3rem;
       }}
+      .zoom-controls {{
+        display: flex;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+        margin: 1rem 0 1.5rem 0;
+      }}
+      .zoom-controls label {{
+        flex: 1 1 220px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        font-size: 0.85rem;
+        color: #b5bfd7;
+      }}
+      .zoom-label {{
+        flex: 1 1 100%;
+        font-size: 0.9rem;
+        color: #d4d8e3;
+      }}
       .legend {{
         margin-top: 2rem;
         display: flex;
@@ -287,7 +325,18 @@ def build_index_html(payload: Dict[str, object]) -> str:
       <h1>Vehicle Telemetry (Prototype 2 – Server SVG)</h1>
       <p class="subhead">{meta}</p>
       <p class="summary">Group 2 (speed & energy) is rendered above Group 1 (autopilot & driver controls). Both share the same time axis.</p>
-      <div class="chart" role="img" aria-label="Vehicle telemetry visualization">
+      <div class="zoom-controls" aria-label="Time window controls">
+        <label>
+          Start index
+          <input type="range" id="zoomStart" min="0" max="0" step="1" value="0" disabled />
+        </label>
+        <label>
+          End index
+          <input type="range" id="zoomEnd" min="0" max="0" step="1" value="0" disabled />
+        </label>
+        <div class="zoom-label" id="zoomLabel">Loading telemetry…</div>
+      </div>
+      <div id="chartContainer" class="chart" role="img" aria-label="Vehicle telemetry visualization">
         {svg_markup}
       </div>
       <div class="legend" aria-hidden="true">
@@ -305,6 +354,90 @@ def build_index_html(payload: Dict[str, object]) -> str:
         Visualization generated on the server to keep the prototype Python-first and easy to maintain.
       </footer>
     </div>
+    <script>
+      (function () {{
+        const chartContainer = document.getElementById('chartContainer');
+        const startInput = document.getElementById('zoomStart');
+        const endInput = document.getElementById('zoomEnd');
+        const zoomLabel = document.getElementById('zoomLabel');
+        let points = [];
+
+        const formatTime = (iso) => {{
+          const dt = new Date(iso);
+          return dt.toLocaleTimeString([], {{ hour: '2-digit', minute: '2-digit' }});
+        }};
+
+        const updateLabel = (startIdx, endIdx) => {{
+          if (!points.length) {{
+            zoomLabel.textContent = 'No telemetry available';
+            return;
+          }}
+          zoomLabel.textContent = `Showing ${{formatTime(points[startIdx].timestamp)}} \u2192 ${{formatTime(points[endIdx].timestamp)}}`;
+        }};
+
+        const renderSvg = (startIdx, endIdx) => {{
+          if (!points.length) {{
+            return;
+          }}
+          const startTs = points[startIdx].timestamp;
+          const endTs = points[endIdx].timestamp;
+          const url = new URL('/visualization.svg', window.location.origin);
+          url.searchParams.set('start', startTs);
+          url.searchParams.set('end', endTs);
+          chartContainer.setAttribute('aria-busy', 'true');
+          fetch(url.toString())
+            .then((res) => res.text())
+            .then((svgText) => {{
+              chartContainer.innerHTML = svgText;
+              chartContainer.removeAttribute('aria-busy');
+              updateLabel(startIdx, endIdx);
+            }})
+            .catch((err) => {{
+              console.error(err);
+              zoomLabel.textContent = 'Unable to update visualization.';
+              chartContainer.removeAttribute('aria-busy');
+            }});
+        }};
+
+        const clampInputs = () => {{
+          let startIdx = Number(startInput.value);
+          let endIdx = Number(endInput.value);
+          if (endIdx <= startIdx) {{
+            if (endIdx < points.length - 1) {{
+              endIdx = startIdx + 1;
+              endInput.value = endIdx;
+            }} else {{
+              startIdx = endIdx - 1;
+              startInput.value = startIdx;
+            }}
+          }}
+          renderSvg(startIdx, endIdx);
+        }};
+
+        fetch('/telemetry')
+          .then((res) => res.json())
+          .then((payload) => {{
+            points = payload.points || [];
+            if (points.length < 2) {{
+              zoomLabel.textContent = 'Not enough telemetry points for zooming.';
+              return;
+            }}
+            startInput.max = Math.max(points.length - 2, 0);
+            endInput.max = Math.max(points.length - 1, 1);
+            startInput.value = 0;
+            endInput.value = endInput.max;
+            startInput.disabled = false;
+            endInput.disabled = false;
+            startInput.addEventListener('input', clampInputs);
+            endInput.addEventListener('input', clampInputs);
+            clampInputs();
+          }})
+          .catch((err) => {{
+            console.error(err);
+            zoomLabel.textContent = 'Unable to load telemetry for zooming.';
+          }});
+      }})();
+    </script>
   </body>
 </html>
 """
@@ -312,12 +445,17 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     server_version = "TelemetryServer/0.1"
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler naming)
-        if self.path in ("/", "/index.html"):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query_params = parse_qs(parsed.query)
+        if path in ("/", "/index.html"):
             self._serve_index()
-        elif self.path == "/telemetry":
+        elif path == "/telemetry":
             self._serve_json(SAMPLE_PAYLOAD)
-        elif self.path == "/visualization.svg":
-            self._serve_svg(SAMPLE_PAYLOAD)
+        elif path == "/visualization.svg":
+            start = query_params.get("start", [None])[0]
+            end = query_params.get("end", [None])[0]
+            self._serve_svg(SAMPLE_PAYLOAD, start, end)
         else:
             self._serve_not_found()
 
@@ -350,8 +488,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _serve_svg(self, payload: Dict[str, object]) -> None:
-        body = build_visualization_svg(payload).encode("utf-8")
+    def _serve_svg(self, payload: Dict[str, object], start: str | None, end: str | None) -> None:
+        body = build_visualization_svg(payload, start_iso=start, end_iso=end).encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
         self.send_header("Cache-Control", "no-store")

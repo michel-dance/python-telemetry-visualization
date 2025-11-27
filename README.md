@@ -52,6 +52,7 @@ Prototype 2 keeps the lightweight Python backend but now renders the SVG entirel
 
 - **Group 2 (top)** – speed (km/h) and cumulative energy (kWh) sharing the same time axis.
 - **Group 1 (bottom)** – autopilot engagement bands along with throttle and brake positions (%).
+- Horizontal zoom controls on the page let you focus on a subset of timestamps; the UI re-requests `/visualization.svg` with the selected time window.
 
 This keeps the visualization logic purely in Python (no Pyodide or JavaScript chart libraries). A “Download SVG” action on the page lets you grab the rendered visualization as an image directly from the server, and guarantees the two telemetry groups are rendered in their own dedicated panels.
 
