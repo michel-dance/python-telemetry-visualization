@@ -21,11 +21,15 @@ As a vehicle fleet manager, I would like to review the telemetry data on my vehi
 
 The vehicle telemetry includes speed, gps, auto pilot, and energy usage data.
 
-## Prototype
+## Prototype requirements
 
-A web based appliction that shows a sample vehicle telemetry visualiztion for an hypothetical trip.
+A web based appliction that shows a sample vehicle telemetry visualiztion for an hypothetical trip
+
+The web applications allows the user to download the visualization as an image.
 
 ## Prototype 1 implementation
+
+branch: prototype1
 
 The initial version provides a single-file Python backend (`server.py`) plus a static HTML page that used Chart.js to render speed, energy usage, and autopilot data. Prototype 1 proved out the data model and API surface but still relied on a JavaScript charting library for visualization.
 
@@ -33,13 +37,15 @@ The initial version provides a single-file Python backend (`server.py`) plus a s
 
 ## Prototype 2 implementation
 
-Prototype 2 keeps the lightweight Python backend but swaps the front-end charting layer for pure Python executed in the browser via WebAssembly (Pyodide). The Pyodide runtime pulls `/telemetry`, processes the JSON, and emits an inline SVG that plots:
+branch: prototype2
+
+Prototype 2 keeps the lightweight Python backend but now renders the SVG entirely on the server. When the browser requests `/` it receives fully composed HTML with the inline SVG chart already embedded; the same SVG is also exposed at `/visualization.svg` so it can be downloaded or reused elsewhere. The chart still presents:
 
 - Speed (km/h) on the left axis
 - Cumulative energy (kWh) on the right axis
 - Autopilot engagement bands across the plot background
 
-This keeps the visualization logic in Python, avoiding the need to maintain JavaScript charting code going forward. The HTML still loads Pyodide from a CDN, so a network connection is required the first time the page loads to download the runtime (~8 MB).
+This keeps the visualization logic purely in Python (no Pyodide or JavaScript chart libraries). A “Download SVG” action on the page lets you grab the rendered visualization as an image directly from the server.
 
 ![Demo screenshot](prototype2.png)
     
@@ -53,7 +59,7 @@ This keeps the visualization logic in Python, avoiding the need to maintain Java
 python3 server.py
 ```
 
-Then open your browser to [http://127.0.0.1:7777](http://127.0.0.1:7777). The Pyodide runtime download happens in the browser; subsequent loads are served from cache.
+Then open your browser to [http://127.0.0.1:7777](http://127.0.0.1:7777). Use the “Download SVG” button (or hit `/visualization.svg` directly) to save the visualization as an image.
 
 Environment variables:
 
@@ -61,4 +67,3 @@ Environment variables:
 - `TELEMETRY_PORT` – port to listen on (default `7777`)
 
 Kill the server with `Ctrl+C`. The `/telemetry` endpoint can also be queried directly to inspect the sample JSON payload.
-
