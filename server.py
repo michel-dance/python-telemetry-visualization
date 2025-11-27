@@ -24,6 +24,8 @@ def build_sample_data() -> List[Dict[str, object]]:
     speeds = [0, 5, 20, 35, 50, 65, 80, 75, 60, 45, 30, 15, 0]
     energy = [0.0]
     autopilot = []
+    throttle = [0, 15, 45, 60, 78, 88, 95, 80, 55, 30, 10, 0, 0]
+    brake = [80, 40, 10, 5, 0, 0, 0, 0, 10, 25, 45, 70, 90]
 
     for idx in range(1, len(speeds)):
         delta_kwh = max(speeds[idx], 1) * 0.002  # crude approximation
@@ -40,6 +42,8 @@ def build_sample_data() -> List[Dict[str, object]]:
                 "speed_kmh": speed,
                 "autopilot": autopilot[idx],
                 "energy_kwh_used": energy[idx],
+                "throttle_pct": throttle[idx],
+                "brake_pct": brake[idx],
             }
         )
 
@@ -50,13 +54,18 @@ SAMPLE_PAYLOAD = {"vehicle": "Prototype AV-1", "trip_id": "demo-trip-001", "poin
 
 
 def build_visualization_svg(payload: Dict[str, object]) -> str:
-    """Render the telemetry payload into an SVG polyline chart."""
+    """Render the telemetry payload into a stacked SVG visualization."""
     points = payload.get("points", [])
     width = 960
-    height = 420
-    pad = 60
-    inner_w = width - 2 * pad
-    inner_h = height - 2 * pad
+    pad_left = 60
+    pad_right = 60
+    pad_top = 40
+    pad_bottom = 65
+    group2_height = 240  # Speed + Energy (top)
+    group_gap = 40
+    group1_height = 140  # Autopilot + Throttle + Brake (bottom)
+    inner_w = width - pad_left - pad_right
+    height = pad_top + group2_height + group_gap + group1_height + pad_bottom
 
     if not points:
         return (
@@ -67,8 +76,15 @@ def build_visualization_svg(payload: Dict[str, object]) -> str:
             "</svg>"
         )
 
+    group2_top = pad_top
+    group2_bottom = group2_top + group2_height
+    group1_top = group2_bottom + group_gap
+    group1_bottom = group1_top + group1_height
+
     speed_vals = [float(p["speed_kmh"]) for p in points]
     energy_vals = [float(p["energy_kwh_used"]) for p in points]
+    throttle_vals = [float(p.get("throttle_pct", 0.0)) for p in points]
+    brake_vals = [float(p.get("brake_pct", 0.0)) for p in points]
     autopilot_vals = [bool(p["autopilot"]) for p in points]
 
     speed_max = max(max(speed_vals), 1.0)
@@ -76,15 +92,21 @@ def build_visualization_svg(payload: Dict[str, object]) -> str:
 
     def x_pos(idx: int) -> float:
         if len(points) == 1:
-            return pad
+            return pad_left
         step = inner_w / (len(points) - 1)
-        return pad + idx * step
+        return pad_left + idx * step
 
     def y_speed(value: float) -> float:
-        return pad + inner_h - (value / speed_max) * inner_h
+        return group2_bottom - (value / speed_max) * group2_height
 
     def y_energy(value: float) -> float:
-        return pad + inner_h - (value / energy_max) * inner_h
+        return group2_bottom - (value / energy_max) * group2_height
+
+    def y_throttle(value: float) -> float:
+        return group1_bottom - (value / 100.0) * group1_height
+
+    def y_brake(value: float) -> float:
+        return group1_bottom - (value / 100.0) * group1_height
 
     def build_polyline(values: List[float], mapper) -> str:
         coords = [f"{x_pos(idx):.2f},{mapper(val):.2f}" for idx, val in enumerate(values)]
@@ -92,6 +114,8 @@ def build_visualization_svg(payload: Dict[str, object]) -> str:
 
     speed_path = build_polyline(speed_vals, y_speed)
     energy_path = build_polyline(energy_vals, y_energy)
+    throttle_path = build_polyline(throttle_vals, y_throttle)
+    brake_path = build_polyline(brake_vals, y_brake)
 
     bands = []
     start_idx = None
@@ -104,14 +128,14 @@ def build_visualization_svg(payload: Dict[str, object]) -> str:
     if start_idx is not None:
         bands.append((start_idx, len(points) - 1))
 
-    band_rects = []
+    autopilot_rects = []
     for start, end in bands:
         x1 = x_pos(start)
         x2 = x_pos(end)
         width_band = max(x2 - x1, 4)
-        band_rects.append(
-            f'<rect x="{x1:.2f}" y="{pad - 20}" width="{width_band:.2f}" '
-            f'height="{inner_h + 20:.2f}" class="autopilot"></rect>'
+        autopilot_rects.append(
+            f'<rect x="{x1:.2f}" y="{group1_top:.2f}" width="{width_band:.2f}" '
+            f'height="{group1_height:.2f}" class="autopilot"></rect>'
         )
 
     tick_indices = {0, len(points) - 1}
@@ -122,30 +146,42 @@ def build_visualization_svg(payload: Dict[str, object]) -> str:
         ts = datetime.fromisoformat(str(points[idx]["timestamp"]))
         label = ts.strftime("%H:%M")
         tick_labels.append(
-            f'<text x="{x_pos(idx):.2f}" y="{pad + inner_h + 30}" class="tick">{label}</text>'
+            f'<text x="{x_pos(idx):.2f}" y="{group1_bottom + 30}" class="tick">{label}</text>'
         )
 
     svg_parts = [
         f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
-        'role="img" aria-label="Speed, energy, autopilot telemetry">',
+        'role="img" aria-label="Telemetry grouped by vehicle dynamics and control states">',
         '<defs><style><![CDATA[',
         '.bg { fill: #050811; }',
         '.axis { stroke: rgba(255,255,255,0.25); stroke-width: 1; }',
+        '.divider { stroke: rgba(255,255,255,0.15); stroke-width: 1; stroke-dasharray: 4 4; }',
         '.speed { fill: none; stroke: #42b0ff; stroke-width: 3; }',
         '.energy { fill: none; stroke: #ff8f3f; stroke-width: 3; stroke-dasharray: 6 4; }',
+        '.throttle { fill: none; stroke: #f2cf63; stroke-width: 2.5; }',
+        '.brake { fill: none; stroke: #ff5c93; stroke-width: 2.5; stroke-dasharray: 5 4; }',
         '.autopilot { fill: rgba(0,214,143,0.12); stroke: rgba(0,214,143,0.4); stroke-width: 1; }',
         '.tick { fill: #d4d8e3; font-size: 0.85rem; text-anchor: middle; }',
         '.label { fill: #d4d8e3; font-size: 0.9rem; }',
+        '.group-label { fill: #b5bfd7; font-size: 0.9rem; }',
         ']]></style></defs>',
         f'<rect width="{width}" height="{height}" class="bg"></rect>',
-        f'<line x1="{pad}" y1="{pad}" x2="{pad}" y2="{pad + inner_h:.2f}" class="axis"></line>',
-        f'<line x1="{pad}" y1="{pad + inner_h:.2f}" x2="{pad + inner_w:.2f}" y2="{pad + inner_h:.2f}" class="axis"></line>',
-        *band_rects,
+        f'<text x="{pad_left}" y="{group2_top - 12}" class="group-label">Group 2 · Speed &amp; Energy</text>',
+        f'<text x="{pad_left}" y="{group1_top - 12}" class="group-label">Group 1 · Control Inputs</text>',
+        f'<line x1="{pad_left}" y1="{group2_top}" x2="{pad_left}" y2="{group2_bottom}" class="axis"></line>',
+        f'<line x1="{pad_left}" y1="{group2_bottom}" x2="{pad_left + inner_w}" y2="{group2_bottom}" class="axis"></line>',
+        f'<line x1="{pad_left}" y1="{group1_top}" x2="{pad_left + inner_w}" y2="{group1_top}" class="divider"></line>',
+        f'<line x1="{pad_left}" y1="{group1_bottom}" x2="{pad_left + inner_w}" y2="{group1_bottom}" class="axis"></line>',
+        *autopilot_rects,
         f'<polyline points="{speed_path}" class="speed"></polyline>',
         f'<polyline points="{energy_path}" class="energy"></polyline>',
+        f'<polyline points="{throttle_path}" class="throttle"></polyline>',
+        f'<polyline points="{brake_path}" class="brake"></polyline>',
         *tick_labels,
-        f'<text x="{pad}" y="{pad - 25}" class="label">Speed (km/h)</text>',
-        f'<text x="{pad + inner_w}" y="{pad - 25}" class="label" text-anchor="end">Energy (kWh)</text>',
+        f'<text x="{pad_left}" y="{group2_top - 30}" class="label">Speed (km/h)</text>',
+        f'<text x="{pad_left + inner_w}" y="{group2_top - 30}" class="label" text-anchor="end">Energy (kWh)</text>',
+        f'<text x="{pad_left}" y="{group1_top + 20}" class="label">Throttle / Brake (%)</text>',
+        f'<text x="{pad_left + inner_w}" y="{group1_bottom + 50}" class="label" text-anchor="end">Time</text>',
         '</svg>',
     ]
     return "".join(svg_parts)
@@ -196,9 +232,10 @@ def build_index_html(payload: Dict[str, object]) -> str:
       }}
       .chart {{
         min-height: 420px;
+        margin-bottom: 3rem;
       }}
       .legend {{
-        margin-top: 1rem;
+        margin-top: 2rem;
         display: flex;
         flex-wrap: wrap;
         gap: 1rem;
@@ -218,6 +255,13 @@ def build_index_html(payload: Dict[str, object]) -> str:
       .chip .speed {{ background: #42b0ff; }}
       .chip .energy {{ background: #ff8f3f; }}
       .chip .autopilot {{ background: #00d68f; }}
+      .chip .throttle {{ background: #f2cf63; }}
+      .chip .brake {{ background: #ff5c93; }}
+      .summary {{
+        margin: 0 0 1.25rem 0;
+        color: #9fb2d9;
+        font-size: 0.95rem;
+      }}
       .actions {{
         margin-top: 1.5rem;
         display: flex;
@@ -242,12 +286,15 @@ def build_index_html(payload: Dict[str, object]) -> str:
     <div class="card">
       <h1>Vehicle Telemetry (Prototype 2 – Server SVG)</h1>
       <p class="subhead">{meta}</p>
+      <p class="summary">Group 2 (speed & energy) is rendered above Group 1 (autopilot & driver controls). Both share the same time axis.</p>
       <div class="chart" role="img" aria-label="Vehicle telemetry visualization">
         {svg_markup}
       </div>
       <div class="legend" aria-hidden="true">
         <div class="chip"><span class="speed"></span>Speed</div>
         <div class="chip"><span class="energy"></span>Cumulative Energy</div>
+        <div class="chip"><span class="throttle"></span>Throttle</div>
+        <div class="chip"><span class="brake"></span>Brake</div>
         <div class="chip"><span class="autopilot"></span>Autopilot Engaged</div>
       </div>
       <div class="actions">

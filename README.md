@@ -19,7 +19,16 @@ The domain is vehicle driving automation.
 
 As a vehicle fleet manager, I would like to review the telemetry data on my vehicles after a vehicle has completed a trip.
 
-The vehicle telemetry includes speed, gps, auto pilot, and energy usage data.
+The vehicle telemetry includes speed, gps, auto pilot, throttle position, brake, and energy usage data.
+
+Telemetry data is devided into two groups, with group 1 containing vehicle control: auto pilot engagement, throttle position, brake positions. Group 2 containing speed and energy.
+
+## Visualization requirements
+
+* The x-axis should represent time.
+* The two telemetry groups should be drawn separately with group 1 being below group 2.
+
+
 
 ## Prototype requirements
 
@@ -39,13 +48,12 @@ The initial version provides a single-file Python backend (`server.py`) plus a s
 
 branch: prototype2
 
-Prototype 2 keeps the lightweight Python backend but now renders the SVG entirely on the server. When the browser requests `/` it receives fully composed HTML with the inline SVG chart already embedded; the same SVG is also exposed at `/visualization.svg` so it can be downloaded or reused elsewhere. The chart still presents:
+Prototype 2 keeps the lightweight Python backend but now renders the SVG entirely on the server. When the browser requests `/` it receives fully composed HTML with the inline SVG chart already embedded; the same SVG is also exposed at `/visualization.svg` so it can be downloaded or reused elsewhere. The visualization now follows the new domain requirements:
 
-- Speed (km/h) on the left axis
-- Cumulative energy (kWh) on the right axis
-- Autopilot engagement bands across the plot background
+- **Group 2 (top)** – speed (km/h) and cumulative energy (kWh) sharing the same time axis.
+- **Group 1 (bottom)** – autopilot engagement bands along with throttle and brake positions (%).
 
-This keeps the visualization logic purely in Python (no Pyodide or JavaScript chart libraries). A “Download SVG” action on the page lets you grab the rendered visualization as an image directly from the server.
+This keeps the visualization logic purely in Python (no Pyodide or JavaScript chart libraries). A “Download SVG” action on the page lets you grab the rendered visualization as an image directly from the server, and guarantees the two telemetry groups are rendered in their own dedicated panels.
 
 ![Demo screenshot](prototype2.png)
     
