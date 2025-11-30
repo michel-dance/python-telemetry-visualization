@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 def build_sample_data() -> List[Dict[str, object]]:
     """Generate a small synthetic trip with 1-minute resolution."""
-    start = datetime(2024, 5, 1, 9, 0, 0)
+    trip_start = datetime(2024, 5, 1, 9, 0, 0)
     speeds = [0, 5, 20, 35, 50, 65, 80, 75, 60, 45, 30, 15, 0]
     energy = [0.0]
     autopilot = []
@@ -36,8 +36,8 @@ def build_sample_data() -> List[Dict[str, object]]:
     # distinct segments rather than a repeating on/off cadence.
     autopilot_segments = [(1, 3), (5, 9), (11, 12)]
     engaged_lookup = [False] * len(speeds)
-    for start, end in autopilot_segments:
-        for idx in range(start, min(end + 1, len(engaged_lookup))):
+    for seg_start, seg_end in autopilot_segments:
+        for idx in range(seg_start, min(seg_end + 1, len(engaged_lookup))):
             engaged_lookup[idx] = True
 
     for idx, _ in enumerate(speeds):
@@ -47,7 +47,7 @@ def build_sample_data() -> List[Dict[str, object]]:
     for idx, speed in enumerate(speeds):
         points.append(
             {
-                "timestamp": (start + timedelta(minutes=idx)).isoformat(),
+                "timestamp": (trip_start + timedelta(minutes=idx)).isoformat(),
                 "speed_kmh": speed,
                 "autopilot": autopilot[idx],
                 "energy_kwh_used": energy[idx],
