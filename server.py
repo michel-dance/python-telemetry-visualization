@@ -32,8 +32,16 @@ def build_sample_data() -> List[Dict[str, object]]:
         delta_kwh = max(speeds[idx], 1) * 0.002  # crude approximation
         energy.append(round(energy[-1] + delta_kwh, 3))
 
-    for idx, speed in enumerate(speeds):
-        autopilot.append(speed >= 40 and idx % 2 == 0)
+    # Craft autopilot bands with varying lengths so the engagement bar shows
+    # distinct segments rather than a repeating on/off cadence.
+    autopilot_segments = [(1, 3), (5, 9), (11, 12)]
+    engaged_lookup = [False] * len(speeds)
+    for start, end in autopilot_segments:
+        for idx in range(start, min(end + 1, len(engaged_lookup))):
+            engaged_lookup[idx] = True
+
+    for idx, _ in enumerate(speeds):
+        autopilot.append(engaged_lookup[idx])
 
     points = []
     for idx, speed in enumerate(speeds):
