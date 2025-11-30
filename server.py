@@ -211,8 +211,10 @@ def build_visualization_svg(payload: Dict[str, object], playback_idx: int | None
         )
 
     svg_parts = [
-        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
-        'role="img" aria-label="Telemetry grouped by vehicle dynamics and control states">',
+        f'<svg id="telemetry-svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'role="img" aria-label="Telemetry grouped by vehicle dynamics and control states" '
+        f'data-pad-left="{pad_left}" data-inner-width="{inner_w}" '
+        f'data-point-count="{len(points)}" data-initial-index="{playback_idx}">',
         '<defs><style><![CDATA[',
         '.bg { fill: #050811; }',
         '.axis { stroke: rgba(255,255,255,0.25); stroke-width: 1; }',
@@ -235,7 +237,7 @@ def build_visualization_svg(payload: Dict[str, object], playback_idx: int | None
         f'<line x1="{pad_left}" y1="{group1_top}" x2="{pad_left + inner_w}" y2="{group1_top}" class="divider"></line>',
         f'<line x1="{pad_left}" y1="{control_bottom}" x2="{pad_left + inner_w}" y2="{control_bottom}" class="divider"></line>',
         f'<line x1="{pad_left}" y1="{group1_bottom}" x2="{pad_left + inner_w}" y2="{group1_bottom}" class="axis"></line>',
-        f'<line x1="{playback_x:.2f}" y1="{group2_top}" x2="{playback_x:.2f}" y2="{group1_bottom}" class="playback"></line>',
+        f'<line id="playback-head" x1="{playback_x:.2f}" y1="{group2_top}" x2="{playback_x:.2f}" y2="{group1_bottom}" class="playback"></line>',
         *autopilot_rects,
         f'<polyline points="{speed_path}" class="speed"></polyline>',
         f'<polyline points="{energy_path}" class="energy"></polyline>',
@@ -274,38 +276,189 @@ def build_index_html(payload: Dict[str, object], playback_idx: int | None = None
     else:
         playback_label = "—"
     table_rows = [
-        ("Time", playback_label),
+        ("Time", playback_label, "time"),
         (
-            "Speed (km/h)",
-            f"{float(playback_point.get('speed_kmh', 0.0)):.0f}" if playback_point else "—",
+            "Speed",
+            f"{float(playback_point.get('speed_kmh', 0.0)):.0f} km/h" if playback_point else "—",
+            "speed",
         ),
         (
-            "Cumulative energy (kWh)",
-            f"{float(playback_point.get('energy_kwh_used', 0.0)):.2f}" if playback_point else "—",
+            "Cumulative energy",
+            f"{float(playback_point.get('energy_kwh_used', 0.0)):.2f} kWh" if playback_point else "—",
+            "energy",
         ),
         (
             "Autopilot",
-            "Engaged" if playback_point.get("autopilot") else ("Disengaged" if playback_point else "—"),
+            "Engaged" if playback_point and playback_point.get("autopilot") else ("Disengaged" if playback_point else "—"),
+            "autopilot",
         ),
         (
-            "Throttle position (%)",
-            f"{float(playback_point.get('throttle_pct', 0.0)):.0f}" if playback_point else "—",
+            "Throttle position",
+            f"{float(playback_point.get('throttle_pct', 0.0)):.0f}%" if playback_point else "—",
+            "throttle",
         ),
         (
-            "Brake position (%)",
-            f"{float(playback_point.get('brake_pct', 0.0)):.0f}" if playback_point else "—",
+            "Brake position",
+            f"{float(playback_point.get('brake_pct', 0.0)):.0f}%" if playback_point else "—",
+            "brake",
         ),
     ]
 
     table_body = "\n".join(
-        f'          <tr><th scope="row">{label}</th><td>{value}</td></tr>' for label, value in table_rows
+        f'            <tr><th scope="row">{label}</th><td id="telemetry-{field}">{value}</td></tr>'
+        for label, value, field in table_rows
     )
     table_hint = (
-        f"Sample {playback_idx + 1} of {total_points}. "
+        f'<span id="telemetry-meta">Sample {playback_idx + 1} of {total_points}</span>. '
         "Use ?idx=N or ?time=YYYY-MM-DDTHH:MM to inspect another timestamp."
         if points
         else "Load telemetry to inspect the trip timeline."
     )
+
+    points_json = json.dumps(points)
+    interaction_scripts = f"""
+      <script id="telemetry-points" type="application/json">{points_json}</script>
+      <script>
+        (() => {{
+          const dataEl = document.getElementById('telemetry-points');
+          if (!dataEl) {{
+            return;
+          }}
+          let pointsData;
+          try {{
+            pointsData = JSON.parse(dataEl.textContent || '[]');
+          }} catch (_error) {{
+            return;
+          }}
+          if (!Array.isArray(pointsData) || pointsData.length === 0) {{
+            return;
+          }}
+          const svg = document.getElementById('telemetry-svg');
+          const playbackHead = document.getElementById('playback-head');
+          if (!svg || !playbackHead) {{
+            return;
+          }}
+          const padLeft = parseFloat(svg.dataset.padLeft || '0');
+          const innerWidth = parseFloat(svg.dataset.innerWidth || '0');
+          const total = pointsData.length;
+          const step = total > 1 ? innerWidth / (total - 1) : 0;
+          let activeIdx = parseInt(svg.dataset.initialIndex || '0', 10);
+          if (Number.isNaN(activeIdx)) {{
+            activeIdx = 0;
+          }}
+
+          const fields = {{
+            time: document.getElementById('telemetry-time'),
+            speed: document.getElementById('telemetry-speed'),
+            energy: document.getElementById('telemetry-energy'),
+            autopilot: document.getElementById('telemetry-autopilot'),
+            throttle: document.getElementById('telemetry-throttle'),
+            brake: document.getElementById('telemetry-brake'),
+          }};
+          const meta = document.getElementById('telemetry-meta');
+
+          const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+          const formatTime = (iso) => {{
+            const date = new Date(iso);
+            if (Number.isNaN(date.getTime())) {{
+              return iso;
+            }}
+            return date.toLocaleString(undefined, {{
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            }});
+          }};
+
+          const updateTable = (point) => {{
+            if (fields.time) {{
+              fields.time.textContent = formatTime(point.timestamp);
+            }}
+            if (fields.speed) {{
+              fields.speed.textContent = `${{Math.round(point.speed_kmh || 0)}} km/h`;
+            }}
+            if (fields.energy) {{
+              const energyVal = Number(point.energy_kwh_used || 0).toFixed(2);
+              fields.energy.textContent = `${{energyVal}} kWh`;
+            }}
+            if (fields.autopilot) {{
+              fields.autopilot.textContent = point.autopilot ? 'Engaged' : 'Disengaged';
+            }}
+            if (fields.throttle) {{
+              fields.throttle.textContent = `${{Math.round(point.throttle_pct || 0)}}%`;
+            }}
+            if (fields.brake) {{
+              fields.brake.textContent = `${{Math.round(point.brake_pct || 0)}}%`;
+            }}
+          }};
+
+          const movePlaybackHead = (idx) => {{
+            const xPos = padLeft + step * idx;
+            const xStr = xPos.toFixed(2);
+            playbackHead.setAttribute('x1', xStr);
+            playbackHead.setAttribute('x2', xStr);
+            if (meta) {{
+              meta.textContent = `Sample ${{idx + 1}} of ${{total}}`;
+            }}
+          }};
+
+          const render = (idx) => {{
+            const safeIdx = clamp(idx, 0, total - 1);
+            const point = pointsData[safeIdx];
+            if (!point) {{
+              return;
+            }}
+            activeIdx = safeIdx;
+            updateTable(point);
+            movePlaybackHead(safeIdx);
+          }};
+
+          const pointerToIndex = (clientX, clientY) => {{
+            const svgPoint = svg.createSVGPoint();
+            svgPoint.x = clientX;
+            svgPoint.y = clientY;
+            const cursor = svgPoint.matrixTransform(svg.getScreenCTM().inverse());
+            if (!cursor) {{
+              return activeIdx;
+            }}
+            if (innerWidth <= 0) {{
+              return activeIdx;
+            }}
+            const ratio = (cursor.x - padLeft) / innerWidth;
+            const idx = Math.round(ratio * (total - 1));
+            return clamp(idx, 0, total - 1);
+          }};
+
+          const handleMouseMove = (event) => {{
+            const idx = pointerToIndex(event.clientX, event.clientY);
+            if (idx === activeIdx) {{
+              return;
+            }}
+            render(idx);
+          }};
+
+          const handleTouchMove = (event) => {{
+            if (!event.touches || event.touches.length === 0) {{
+              return;
+            }}
+            const touch = event.touches[0];
+            const idx = pointerToIndex(touch.clientX, touch.clientY);
+            if (idx === activeIdx) {{
+              return;
+            }}
+            render(idx);
+          }};
+
+          svg.addEventListener('mousemove', handleMouseMove);
+          svg.addEventListener('touchmove', handleTouchMove, {{ passive: true }});
+
+          render(activeIdx);
+        }})();
+      </script>
+    """
 
     return f"""<!doctype html>
 <html lang="en">
@@ -461,6 +614,7 @@ def build_index_html(payload: Dict[str, object], playback_idx: int | None = None
           </table>
         </section>
       </div>
+{interaction_scripts}
       <div class="legend" aria-hidden="true">
         <div class="chip"><span class="speed"></span>Speed</div>
         <div class="chip"><span class="energy"></span>Cumulative Energy</div>

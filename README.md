@@ -79,7 +79,7 @@ Then open your browser to [http://127.0.0.1:7777](http://127.0.0.1:7777). Use th
 
 ### Inspecting time t
 
-The SVG includes a playback head (vertical line) plus a telemetry table showing the values at time `t`. You can move `t` anywhere on the x-axis by providing query parameters:
+The SVG includes a playback head (vertical line) plus a telemetry table showing the values at time `t`. Hover (or touch-drag) over the visualization to scrub through the trip in real time; the playback head and table will move in tandem. You can also move `t` anywhere on the x-axis by providing query parameters:
 
 - `?idx=N` – zero-based sample index (e.g. `/visualization.svg?idx=5`).
 - `?time=YYYY-MM-DDTHH:MM` – ISO timestamp, the nearest sample is selected (e.g. `/?time=2024-05-01T09:06`).
