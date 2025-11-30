@@ -21,12 +21,19 @@ As a vehicle fleet manager, I would like to review the telemetry data on my vehi
 
 The vehicle telemetry includes speed, gps, auto pilot, throttle position, brake, and energy usage data.
 
-Telemetry data is devided into two groups, with group 1 containing vehicle control: auto pilot engagement, throttle position, brake positions. Group 2 containing speed and energy.
+The telemetry visual commponent is devided into two groups, with group 1 containing vehicle control: auto pilot engagement, throttle position, brake positions. Group 2 containing speed and energy, with telemetry data values  displayed in a table. The telemetry data table component will display the values of the visualization at time t, which represents a specific time anywhere on the x-axis.
+
+A playback head will indicate the current location of a trip replay on the graph.
 
 ## Visualization requirements
 
 * The x-axis should represent time.
 * The two telemetry groups should be drawn separately with group 1 being below group 2.
+* The telemetry table component is located to the right of the group 1 and the group 2 components.
+* The playback head shall be represented as a vertical line intersection the time axis.
+* The auto pilot engagement should be represented as a horizontal bar below the control inputs.
+
+
 
 
 
@@ -52,6 +59,7 @@ Prototype 2 keeps the lightweight Python backend but now renders the SVG entirel
 
 - **Group 2 (top)** – speed (km/h) and cumulative energy (kWh) sharing the same time axis.
 - **Group 1 (bottom)** – autopilot engagement bands along with throttle and brake positions (%).
+- The telemetry table now sits to the right of the visualization so the current sample values are visible without hiding the chart.
 
 This keeps the visualization logic purely in Python (no Pyodide or JavaScript chart libraries). A “Download SVG” action on the page lets you grab the rendered visualization as an image directly from the server, and guarantees the two telemetry groups are rendered in their own dedicated panels.
 
@@ -68,6 +76,13 @@ python3 server.py
 ```
 
 Then open your browser to [http://127.0.0.1:7777](http://127.0.0.1:7777). Use the “Download SVG” button (or hit `/visualization.svg` directly) to save the visualization as an image.
+
+### Inspecting time t
+
+The SVG includes a playback head (vertical line) plus a telemetry table showing the values at time `t`. You can move `t` anywhere on the x-axis by providing query parameters:
+
+- `?idx=N` – zero-based sample index (e.g. `/visualization.svg?idx=5`).
+- `?time=YYYY-MM-DDTHH:MM` – ISO timestamp, the nearest sample is selected (e.g. `/?time=2024-05-01T09:06`).
 
 Environment variables:
 
